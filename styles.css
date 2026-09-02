@@ -48,6 +48,7 @@ input::placeholder, textarea::placeholder { color: var(--text-45); }
 @keyframes slide-in-right { from { transform: translateX(100%); } }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes pop-in { from { opacity: 0; transform: scale(0.96) translateY(10px); } }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } }
 
 /* Paper grain — a fixed fractal-noise overlay, too faint to read as anything
    but texture; pointer-events off so it never intercepts input. */
@@ -119,6 +120,8 @@ html[data-theme="dark"] body::before { opacity: 0.07; }
   display: flex; flex-direction: column; gap: 12px; padding: 20px 22px;
   border-radius: 32px; background: var(--surface);
   box-shadow: 0 1px 2px rgba(46, 43, 37, 0.14);
+  /* "backwards" holds the from-state during each card's stagger delay */
+  animation: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 .host-head { display: flex; align-items: center; gap: 10px; }
 .host-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
@@ -193,6 +196,9 @@ html[data-theme="dark"] body::before { opacity: 0.07; }
 .rrow { border-bottom: 1px solid var(--line-soft); }
 .rrow:hover { background: var(--hover-soft); }
 .empty { padding: 34px 22px; text-align: center; font-size: 14px; color: var(--text-55); }
+/* Skeleton rows — shown in the models panel while the first poll is in flight */
+.sk-row { animation: pulse 1.4s ease-in-out infinite; }
+.sk-bar { height: 11px; border-radius: 999px; background: var(--hover); }
 .ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .num { text-align: right; }
 .dim { color: var(--text-60); }

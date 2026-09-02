@@ -235,6 +235,7 @@ class App extends React.Component {
       const busyAll = !!pending[h.id + '|*'];
       return {
         id: h.id, name: h.name, url: normUrl(h.url), versionLabel: d?.version ? '· ' + d.version : '',
+        delay: i * 60 + 'ms',
         dotColor: loading ? '#c0b6a5' : online ? colorOf(i) : '#c0b6a5', dotAnim: loading ? 'pulse 1.2s ease-in-out infinite' : 'none',
         statusLabel: loading ? 'connecting' : online ? 'online' : 'offline',
         statusBg: loading ? 'var(--neutral-bg)' : online ? 'var(--ok-bg)' : 'var(--danger-bg)', statusFg: loading ? 'var(--neutral-fg)' : online ? 'var(--ok-fg)' : 'var(--danger-fg)',
@@ -335,7 +336,8 @@ class App extends React.Component {
       onCloseChat: () => { this.chatAbort?.abort(); this.setState({ chat: null }); },
       hostCards, rows, hostFilters, activity, herdDots, showActivity: this.props.showActivity,
       rowCountLabel: `${rows.length} across ${hosts.length} host${hosts.length === 1 ? '' : 's'}`,
-      noRows: rows.length === 0, emptyRowsMessage: !anyData ? 'Connecting to hosts…' : q || loadedOnly || hostFilter !== 'all' ? 'No models match.' : 'No models reported — are the hosts reachable?',
+      showSkeleton: rows.length === 0 && !anyData,
+      noRows: rows.length === 0 && anyData, emptyRowsMessage: q || loadedOnly || hostFilter !== 'all' ? 'No models match.' : 'No models reported — are the hosts reachable?',
       noActivity: activity.length === 0, totalRequests: fmtNum(totalRequests), totalIn: fmtNum(totalIn), totalOut: fmtNum(totalOut),
       updatedLabel: updatedAt ? `Updated ${fmtTime(updatedAt)} · every ${this.props.pollSeconds}s` : 'Connecting…',
       refreshIconStyle: polling ? { animation: 'spin 0.9s linear infinite' } : undefined,
@@ -388,7 +390,7 @@ class App extends React.Component {
 
         <section className="cards">
           ${v.hostCards.map((h) => html`
-            <div className="host-card" key=${h.id}>
+            <div className="host-card" key=${h.id} style=${{ animationDelay: h.delay }}>
               <div className="host-head">
                 <span className="host-dot" style=${{ background: h.dotColor, animation: h.dotAnim }}></span>
                 <div className="host-name">${h.name}</div>
@@ -428,6 +430,17 @@ class App extends React.Component {
 
           <div className="panel">
             <div className="mrow thead"><div>Host</div><div>Model</div><div>State</div><div></div></div>
+            ${v.showSkeleton && [0, 1, 2].map((i) => html`
+              <div className="mrow rrow sk-row" key=${'sk' + i} style=${{ animationDelay: i * 120 + 'ms' }}>
+                <div className="host-cell"><span className="dot8" style=${{ background: 'var(--hover)' }}></span><div className="sk-bar" style=${{ width: '70px' }}></div></div>
+                <div style=${{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                  <div className="sk-bar" style=${{ width: '150px' }}></div>
+                  <div className="sk-bar" style=${{ width: '95px', height: '8px' }}></div>
+                </div>
+                <div><div className="sk-bar" style=${{ width: '62px', height: '20px' }}></div></div>
+                <div className="row-actions"><div className="sk-bar" style=${{ width: '96px', height: '30px' }}></div></div>
+              </div>
+            `)}
             ${v.noRows && html`<div className="empty">${v.emptyRowsMessage}</div>`}
             ${v.rows.map((r) => html`
               <div className="mrow rrow" key=${r.key}>
