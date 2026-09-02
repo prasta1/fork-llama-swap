@@ -43,6 +43,20 @@ a { color: var(--accent); text-underline-offset: 3px; }
 input::placeholder, textarea::placeholder { color: var(--text-45); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* Entrance motion — "from"-only keyframes animate into the element's own styles */
+@keyframes slide-up { from { transform: translateY(100%); } }
+@keyframes slide-in-right { from { transform: translateX(100%); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.96) translateY(10px); } }
+
+/* Paper grain — a fixed fractal-noise overlay, too faint to read as anything
+   but texture; pointer-events off so it never intercepts input. */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: 1000; pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+html[data-theme="dark"] body::before { opacity: 0.07; }
 
 /* — layout / header — */
 .wrap { min-height: 100vh; padding: 28px 36px 64px; max-width: 1280px; }
@@ -55,6 +69,11 @@ input::placeholder, textarea::placeholder { color: var(--text-45); }
 }
 .top-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .updated { font-size: 13px; color: var(--text-55); }
+.brand-row { display: flex; align-items: flex-end; gap: 12px; }
+.herd-dots { display: flex; gap: 6px; padding-bottom: 9px; }
+.herd-dot { width: 11px; height: 11px; border-radius: 50%; flex: none; transition: opacity 0.3s; }
+.herd-dot.off { opacity: 0.3; }
+.herd-dot.pulse { animation: pulse 1.2s ease-in-out infinite; }
 
 /* — buttons — */
 .icon-btn {
@@ -197,6 +216,7 @@ input::placeholder, textarea::placeholder { color: var(--text-45); }
   position: fixed; left: 0; right: 0; bottom: 0; height: 46vh;
   display: flex; flex-direction: column; background: var(--logs-bg); color: var(--logs-fg);
   border-radius: 32px 32px 0 0; box-shadow: 0 -12px 32px rgba(46, 43, 37, 0.22); z-index: 20;
+  animation: slide-up 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .logs-head {
   display: flex; align-items: center; gap: 12px; padding: 14px 24px;
@@ -221,6 +241,7 @@ input::placeholder, textarea::placeholder { color: var(--text-45); }
   position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 100vw);
   display: flex; flex-direction: column; background: var(--surface);
   border-radius: 32px 0 0 32px; box-shadow: 0 12px 32px rgba(46, 43, 37, 0.22); z-index: 25;
+  animation: slide-in-right 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .chat-head {
   display: flex; flex-direction: column; gap: 10px; padding: 20px 24px 14px;
@@ -283,11 +304,13 @@ input::placeholder, textarea::placeholder { color: var(--text-45); }
 .modal-backdrop {
   position: fixed; inset: 0; display: grid; place-items: center; padding: 18px;
   background: rgba(46, 43, 37, 0.5); z-index: 30;
+  animation: fade-in 0.2s ease-out;
 }
 .modal {
   width: min(440px, 100%); display: flex; flex-direction: column; gap: 14px;
   padding: 26px; border-radius: 32px; background: var(--surface);
   box-shadow: 0 12px 32px rgba(46, 43, 37, 0.22);
+  animation: pop-in 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .modal-title { font-family: "Caprasimo", serif; font-size: 22px; }
 .modal label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-70); }
@@ -310,3 +333,8 @@ input::placeholder, textarea::placeholder { color: var(--text-45); }
   font-family: "Caprasimo", serif; font-size: 13px; cursor: pointer;
 }
 .save-btn:hover { background: var(--accent-hover); }
+
+/* Honor the OS "reduce motion" setting — statuses stay readable via their labels */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

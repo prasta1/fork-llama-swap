@@ -246,6 +246,13 @@ class App extends React.Component {
       };
     });
 
+    // Header "herd": one dot per host in its table color — pulsing while a
+    // poll is in flight (or before first data), dimmed when the host is offline.
+    const herdDots = hosts.map((h, i) => {
+      const d = data[h.id];
+      return { id: h.id, color: colorOf(i), off: !!d && !d.online, pulse: polling || !d, title: `${h.name} · ${!d ? 'connecting' : d.online ? 'online' : 'offline'}` };
+    });
+
     const q = filter.trim().toLowerCase();
     const rows = [];
     hosts.forEach((h, i) => {
@@ -326,7 +333,7 @@ class App extends React.Component {
       onChatSend: () => { if (chat?.streaming) this.chatAbort?.abort(); else this.sendChat(); },
       onClearChat: () => { this.chatAbort?.abort(); this.setChat({ messages: [], error: '' }); },
       onCloseChat: () => { this.chatAbort?.abort(); this.setState({ chat: null }); },
-      hostCards, rows, hostFilters, activity, showActivity: this.props.showActivity,
+      hostCards, rows, hostFilters, activity, herdDots, showActivity: this.props.showActivity,
       rowCountLabel: `${rows.length} across ${hosts.length} host${hosts.length === 1 ? '' : 's'}`,
       noRows: rows.length === 0, emptyRowsMessage: !anyData ? 'Connecting to hosts…' : q || loadedOnly || hostFilter !== 'all' ? 'No models match.' : 'No models reported — are the hosts reachable?',
       noActivity: activity.length === 0, totalRequests: fmtNum(totalRequests), totalIn: fmtNum(totalIn), totalOut: fmtNum(totalOut),
@@ -362,7 +369,12 @@ class App extends React.Component {
         <header className="topbar">
           <div className="brand">
             <div className="kicker">llama-swap · all hosts</div>
-            <h1>Herd</h1>
+            <div className="brand-row">
+              <h1>Herd</h1>
+              <div className="herd-dots">
+                ${v.herdDots.map((d) => html`<span key=${d.id} className=${'herd-dot' + (d.off ? ' off' : '') + (d.pulse ? ' pulse' : '')} style=${{ background: d.color }} title=${d.title}></span>`)}
+              </div>
+            </div>
           </div>
           <div className="top-actions">
             <span className="updated">${v.updatedLabel}</span>
