@@ -4,6 +4,14 @@ One dashboard for [llama-swap](https://github.com/mostlygeek/llama-swap) across 
 
 No build step — a static page using React (UMD) + [htm](https://github.com/developit/htm) from CDN.
 
+## Where this code lives
+
+This is a standalone project, backed up as the [`herd` branch of `prasta1/fork-llama-swap`](https://github.com/prasta1/fork-llama-swap/tree/herd) — an orphan branch that shares no history with llama-swap itself, so the fork's `main` stays pure upstream. Day to day, `git push` from this checkout just works. To get it back on a new machine:
+
+```sh
+git clone -b herd https://github.com/prasta1/fork-llama-swap.git the-herd
+```
+
 ## Run
 
 ```sh
