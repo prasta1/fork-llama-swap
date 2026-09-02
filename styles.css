@@ -73,8 +73,9 @@ html[data-theme="dark"] body::before { opacity: 0.07; }
 .brand-row { display: flex; align-items: flex-end; gap: 12px; }
 .herd-dots { display: flex; gap: 6px; padding-bottom: 9px; }
 .herd-dot { width: 11px; height: 11px; border-radius: 50%; flex: none; transition: opacity 0.3s; }
-.herd-dot.off { opacity: 0.3; }
-.herd-dot.pulse { animation: pulse 1.2s ease-in-out infinite; }
+.herd-emoji { font-size: 16px; line-height: 1; flex: none; transition: opacity 0.3s; }
+.herd-dots .off { opacity: 0.3; }
+.herd-dots .pulse { animation: pulse 1.2s ease-in-out infinite; }
 
 /* — buttons — */
 .icon-btn {
@@ -124,6 +125,7 @@ html[data-theme="dark"] body::before { opacity: 0.07; }
   animation: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 .host-head { display: flex; align-items: center; gap: 10px; }
+.host-emoji { font-size: 18px; line-height: 1; flex: none; }
 .host-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
 .host-name {
   font-family: "Caprasimo", serif; font-size: 20px; line-height: 1.2;
@@ -326,6 +328,24 @@ html[data-theme="dark"] body::before { opacity: 0.07; }
   border: 1px solid var(--line); border-radius: 999px;
 }
 .modal input:focus { border-color: var(--accent); }
+.modal-field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-70); }
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.emoji-chip {
+  width: 32px; height: 32px; border-radius: 999px; border: 1px solid var(--line);
+  background: transparent; font-size: 16px; line-height: 1; cursor: pointer; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.emoji-chip:hover { background: var(--hover); }
+.emoji-chip.on { border-color: var(--accent); background: var(--accent-tint); }
+.modal input.emoji-input { width: 52px; min-height: 32px; padding: 0 8px; text-align: center; font-size: 16px; }
+.swatch { width: 24px; height: 24px; border-radius: 999px; border: none; cursor: pointer; padding: 0; flex: none; }
+.swatch.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+.swatch.auto {
+  width: auto; height: 24px; padding: 0 10px; background: transparent;
+  border: 1px dashed var(--line); font-size: 11px; color: var(--text-55);
+  font-family: "Figtree", sans-serif;
+}
+.swatch.auto.on { border-style: solid; border-color: var(--accent); color: var(--accent); box-shadow: none; }
 .modal-foot { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 .modal-foot .spacer { margin-left: auto; display: flex; gap: 8px; }
 .danger-ghost {

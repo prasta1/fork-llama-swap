@@ -10,6 +10,8 @@ const DEFAULT_HOSTS = [
   { id: 'local', name: 'localhost', url: 'http://localhost:8999' },
 ];
 const HOST_COLORS = ['#c67139', '#7a8a5e', '#a19786', '#8c491a', '#56633f'];
+const EMOJI_PRESETS = ['🦙', '💻', '🖥️', '⚡', '🐐', '🐪', '🏔️', '🌊', '🔥', '🌵'];
+const COLOR_PRESETS = ['#c67139', '#7a8a5e', '#a19786', '#8c491a', '#56633f', '#d67f48', '#ffc6a5', '#aebf92'];
 
 /** Trim a llama-swap URL to its bare origin: no trailing slash, /ui, or #hash. */
 const normUrl = (u) => (u || '').trim().replace(/#.*$/, '').replace(/\/ui\/?$/, '').replace(/\/+$/, '');
@@ -225,7 +227,8 @@ class App extends React.Component {
       and click handlers — from raw state. Keeps render() itself declarative. */
   renderVals() {
     const { hosts, data, pending, filter, hostFilter, loadedOnly, logsHost, logsText, editing, updatedAt, polling } = this.state;
-    const colorOf = (i) => HOST_COLORS[i % HOST_COLORS.length];
+    // A host's chosen color wins; otherwise fall back to the palette by index.
+    const colorOf = (h, i) => h?.color || HOST_COLORS[i % HOST_COLORS.length];
 
     const hostCards = hosts.map((h, i) => {
       const d = data[h.id];
@@ -234,9 +237,9 @@ class App extends React.Component {
       const online = !!d?.online;
       const busyAll = !!pending[h.id + '|*'];
       return {
-        id: h.id, name: h.name, url: normUrl(h.url), versionLabel: d?.version ? '· ' + d.version : '',
+        id: h.id, name: h.name, emoji: h.emoji || '', url: normUrl(h.url), versionLabel: d?.version ? '· ' + d.version : '',
         delay: i * 60 + 'ms',
-        dotColor: loading ? '#c0b6a5' : online ? colorOf(i) : '#c0b6a5', dotAnim: loading ? 'pulse 1.2s ease-in-out infinite' : 'none',
+        dotColor: loading ? '#c0b6a5' : online ? colorOf(h, i) : '#c0b6a5', dotAnim: loading ? 'pulse 1.2s ease-in-out infinite' : 'none',
         statusLabel: loading ? 'connecting' : online ? 'online' : 'offline',
         statusBg: loading ? 'var(--neutral-bg)' : online ? 'var(--ok-bg)' : 'var(--danger-bg)', statusFg: loading ? 'var(--neutral-fg)' : online ? 'var(--ok-fg)' : 'var(--danger-fg)',
         hasError: !!d?.error, error: d?.error || '',
@@ -251,7 +254,7 @@ class App extends React.Component {
     // poll is in flight (or before first data), dimmed when the host is offline.
     const herdDots = hosts.map((h, i) => {
       const d = data[h.id];
-      return { id: h.id, color: colorOf(i), off: !!d && !d.online, pulse: polling || !d, title: `${h.name} · ${!d ? 'connecting' : d.online ? 'online' : 'offline'}` };
+      return { id: h.id, color: colorOf(h, i), emoji: h.emoji || '', off: !!d && !d.online, pulse: polling || !d, title: `${h.name} · ${!d ? 'connecting' : d.online ? 'online' : 'offline'}` };
     });
 
     const q = filter.trim().toLowerCase();
@@ -270,7 +273,7 @@ class App extends React.Component {
         const canAct = d.online && !busy && (isReady || m.state === 'stopped');
         const sub = [m.name ? m.id : '', m.description, (m.aliases || []).length ? 'aka ' + m.aliases.join(', ') : ''].filter(Boolean).join(' · ');
         rows.push({
-          key, hostName: h.name, hostColor: colorOf(i), name: m.name || m.id, sub, stateLabel: st, tagBg: tone[0], tagFg: tone[1],
+          key, hostName: h.name, hostColor: colorOf(h, i), name: m.name || m.id, sub, stateLabel: st, tagBg: tone[0], tagFg: tone[1],
           busy: !canAct,
           actionLabel: busy ? (pending[key] === 'load' ? 'Loading…' : 'Unloading…') : isReady ? 'Unload' : 'Load',
           btnBg: isReady ? 'transparent' : 'var(--accent)', btnFg: isReady ? 'var(--text)' : 'var(--on-accent)', btnBorder: isReady ? 'var(--line)' : 'transparent',
@@ -293,7 +296,7 @@ class App extends React.Component {
       for (const a of d.activity || []) {
         const ok = a.resp_status_code < 400;
         activity.push({
-          key: h.id + '|' + a.id, ts: Date.parse(a.timestamp), time: fmtTime(a.timestamp), hostName: h.name, hostColor: colorOf(i), model: a.model,
+          key: h.id + '|' + a.id, ts: Date.parse(a.timestamp), time: fmtTime(a.timestamp), hostName: h.name, hostColor: colorOf(h, i), model: a.model,
           path: ok ? a.req_path : `${a.req_path} · ${a.resp_status_code}`, pathColor: ok ? 'var(--text-60)' : 'var(--danger-fg)',
           tokIn: fmtNum(a.tokens?.input_tokens), tokOut: fmtNum(a.tokens?.output_tokens),
           tps: a.tokens?.tokens_per_second > 0 ? a.tokens.tokens_per_second.toFixed(1) : '–', took: a.duration_ms < 1000 ? a.duration_ms + 'ms' : (a.duration_ms / 1000).toFixed(1) + 's',
@@ -325,7 +328,7 @@ class App extends React.Component {
 
     return {
       showChat: !!chat, chatTargets, chatTarget: chat ? chat.hostId + '|' + chat.modelId : '',
-      chatHostColor: chatHostIdx >= 0 ? colorOf(chatHostIdx) : '#c0b6a5', chatStateLabel: cs, chatStateBg: csTone[0], chatStateFg: csTone[1],
+      chatHostColor: chatHostIdx >= 0 ? colorOf(hosts[chatHostIdx], chatHostIdx) : '#c0b6a5', chatStateLabel: cs, chatStateBg: csTone[0], chatStateFg: csTone[1],
       chatMessages, chatEmpty: chatMessages.length === 0, chatInput: chat?.input || '', chatHasError: !!chat?.error, chatError: chat?.error || '',
       chatBtnLabel: chat?.streaming ? 'Stop' : 'Send', chatBtnBg: chat?.streaming ? 'transparent' : 'var(--accent)', chatBtnFg: chat?.streaming ? 'var(--text)' : 'var(--on-accent)', chatBtnBorder: chat?.streaming ? 'var(--line)' : 'transparent',
       onChatTarget: (e) => { const [hid, ...rest] = e.target.value.split('|'); this.openChat(hid, rest.join('|')); },
@@ -347,15 +350,20 @@ class App extends React.Component {
       loadedOnly, onToggleLoadedOnly: (e) => this.setState({ loadedOnly: e.target.checked }),
       showLogs: !!logsHostObj, logsHostName: logsHostObj?.name || '', logsText: logsText || 'Loading logs…', onCloseLogs: () => this.setState({ logsHost: null, logsText: '' }),
       showEditor: !!editing, editorTitle: editing?.id ? 'Edit host' : 'Add host', editIsExisting: !!editing?.id,
-      editName: editing?.name || '', editUrl: editing?.url || '',
+      editName: editing?.name || '', editUrl: editing?.url || '', editEmoji: editing?.emoji || '',
       onEditName: (e) => this.setState({ editing: { ...editing, name: e.target.value } }),
       onEditUrl: (e) => this.setState({ editing: { ...editing, url: e.target.value } }),
+      onEditEmoji: (e) => this.setState({ editing: { ...editing, emoji: e.target.value } }),
+      // Preset chips: clicking the selected emoji clears it; "Auto" clears the color.
+      emojiChips: EMOJI_PRESETS.map((e) => ({ e, on: editing?.emoji === e, onPick: () => this.setState({ editing: { ...editing, emoji: editing?.emoji === e ? '' : e } }) })),
+      colorChips: COLOR_PRESETS.map((c) => ({ c, on: editing?.color === c, onPick: () => this.setState({ editing: { ...editing, color: c } }) })),
+      autoColorOn: !editing?.color, onAutoColor: () => this.setState({ editing: { ...editing, color: '' } }),
       onAddHost: () => this.setState({ editing: { name: '', url: '' } }),
       onCancelEdit: () => this.setState({ editing: null }),
       stop: (e) => e.stopPropagation(),
       onSaveHost: () => {
         if (!editing?.url.trim()) return;
-        const h = { id: editing.id || 'h' + Date.now().toString(36), name: editing.name.trim() || normUrl(editing.url).replace(/^https?:\/\//, ''), url: normUrl(editing.url) };
+        const h = { id: editing.id || 'h' + Date.now().toString(36), name: editing.name.trim() || normUrl(editing.url).replace(/^https?:\/\//, ''), url: normUrl(editing.url), emoji: (editing.emoji || '').trim(), color: editing.color || '' };
         const next = editing.id ? hosts.map((x) => (x.id === h.id ? h : x)) : [...hosts, h];
         this.setState({ editing: null }); this.saveHosts(next);
       },
@@ -374,7 +382,9 @@ class App extends React.Component {
             <div className="brand-row">
               <h1>Herd</h1>
               <div className="herd-dots">
-                ${v.herdDots.map((d) => html`<span key=${d.id} className=${'herd-dot' + (d.off ? ' off' : '') + (d.pulse ? ' pulse' : '')} style=${{ background: d.color }} title=${d.title}></span>`)}
+                ${v.herdDots.map((d) => d.emoji
+                  ? html`<span key=${d.id} className=${'herd-emoji' + (d.off ? ' off' : '') + (d.pulse ? ' pulse' : '')} title=${d.title}>${d.emoji}</span>`
+                  : html`<span key=${d.id} className=${'herd-dot' + (d.off ? ' off' : '') + (d.pulse ? ' pulse' : '')} style=${{ background: d.color }} title=${d.title}></span>`)}
               </div>
             </div>
           </div>
@@ -393,6 +403,7 @@ class App extends React.Component {
             <div className="host-card" key=${h.id} style=${{ animationDelay: h.delay }}>
               <div className="host-head">
                 <span className="host-dot" style=${{ background: h.dotColor, animation: h.dotAnim }}></span>
+                ${h.emoji && html`<span className="host-emoji">${h.emoji}</span>`}
                 <div className="host-name">${h.name}</div>
                 <span className="pill" style=${{ background: h.statusBg, color: h.statusFg }}>${h.statusLabel}</span>
               </div>
@@ -552,6 +563,20 @@ class App extends React.Component {
               <label>llama-swap URL
                 <input value=${v.editUrl} onChange=${v.onEditUrl} placeholder="http://host.tailnet.ts.net:8999" />
               </label>
+              <div className="modal-field">
+                <span>Emoji</span>
+                <div className="chip-row">
+                  ${v.emojiChips.map((c) => html`<button key=${c.e} className=${'emoji-chip' + (c.on ? ' on' : '')} onClick=${c.onPick} title=${c.e}>${c.e}</button>`)}
+                  <input className="emoji-input" maxLength="8" value=${v.editEmoji} onChange=${v.onEditEmoji} placeholder="…" title="Or type any emoji" />
+                </div>
+              </div>
+              <div className="modal-field">
+                <span>Color</span>
+                <div className="chip-row">
+                  <button className=${'swatch auto' + (v.autoColorOn ? ' on' : '')} onClick=${v.onAutoColor}>Auto</button>
+                  ${v.colorChips.map((c) => html`<button key=${c.c} className=${'swatch' + (c.on ? ' on' : '')} style=${{ background: c.c }} onClick=${c.onPick} title=${c.c}></button>`)}
+                </div>
+              </div>
               <div className="modal-foot">
                 ${v.editIsExisting && html`<button className="danger-ghost" onClick=${v.onDeleteHost}>Remove</button>`}
                 <div className="spacer">
