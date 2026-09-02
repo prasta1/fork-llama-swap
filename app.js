@@ -96,16 +96,24 @@ class App extends React.Component {
       const msg = String(models.reason?.message || models.reason || 'unreachable');
       throw new Error(/Failed to fetch|NetworkError|Load failed/i.test(msg) ? 'Unreachable (offline, Tailscale down, or CORS blocked)' : msg);
     }
+    const runningOk = running.status === 'fulfilled';
     const stateById = {};
     for (const m of running.value?.running || []) stateById[m.model] = m.state;
     // Aliases/selectors/profiles are routing entries, not loadable models — hide them.
     const list = (models.value?.data || []).filter((m) => m.meta?.llamaswap?.type !== 'alias' && !['selector', 'profile'].includes(m.meta?.llamaswap?.type)).map((m) => ({
       id: m.id, name: m.name || '', description: m.description || '',
-      aliases: m.meta?.llamaswap?.aliases || [], state: stateById[m.id] || 'stopped',
+      // /running is the source of truth for state. If it failed to fetch, fall
+      // back to /v1/models' own coarser status so a dropped /running poll
+      // doesn't read every model as stopped.
+      aliases: m.meta?.llamaswap?.aliases || [],
+      state: stateById[m.id] || (runningOk ? 'stopped' : m.status?.value === 'loaded' ? 'ready' : 'stopped'),
     }));
     for (const m of running.value?.running || []) if (!list.find((x) => x.id === m.model)) list.push({ id: m.model, name: '', description: '', aliases: [], state: m.state });
     list.sort((a, b) => (a.name + a.id).localeCompare(b.name + b.id, undefined, { numeric: true }));
-    return { online: true, version: ver.value?.version || '', models: list, activity: act.value?.data || [], stats: stats.value || null };
+    return {
+      online: true, version: ver.value?.version || '', models: list, activity: act.value?.data || [], stats: stats.value || null,
+      error: runningOk ? '' : `Could not read /running (${String(running.reason?.message || running.reason || 'error')}) — load status is approximate`,
+    };
   }
 
   async pollAll() {
