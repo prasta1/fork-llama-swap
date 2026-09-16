@@ -1,0 +1,3 @@
+# xcodegen output — run `xcodegen generate` in mac/ after cloning
+mac/Herd.xcodeproj/
+mac/Herd/Info.plist

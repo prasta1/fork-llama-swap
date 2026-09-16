@@ -1,0 +1,35 @@
+name: Herd
+options:
+  bundleIdPrefix: com.peregrine
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+targets:
+  Herd:
+    type: application
+    platform: macOS
+    sources: [Herd]
+    # Explicit Info.plist so we can relax ATS: llama-swap on the MacBook is plain
+    # HTTP over Tailscale (already encrypted at the WireGuard layer). Without this
+    # every request to it fails silently and the host always reads as offline.
+    info:
+      path: Herd/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+  HerdTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [HerdTests]
+    dependencies: [{ target: Herd }]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Herd.app/Contents/MacOS/Herd"
+        BUNDLE_LOADER: "$(TEST_HOST)"

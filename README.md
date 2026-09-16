@@ -18,6 +18,16 @@ git clone -b herd https://github.com/prasta1/fork-llama-swap.git the-herd
 python3 -m http.server 8080
 ```
 
+## Native Mac app
+
+`mac/` holds a SwiftUI port (xcodegen, macOS 14+). It talks to llama-swap with `URLSession`, so it needs no CORS headers and no local web server.
+
+```sh
+cd mac && xcodegen generate && open Herd.xcodeproj
+```
+
+Hosts persist in `UserDefaults` under the same `herd.hosts.v1` key and JSON shape the web page uses in localStorage. Right-click a host to remove it. Not ported yet: chat, logs, activity table, theming.
+
 Then open http://localhost:8080. (Opening `index.html` directly also works.)
 
 ## URL options
