@@ -18,7 +18,35 @@ struct HostSnapshot {
     var online: Bool
     var version = ""
     var models: [Model] = []
+    var stats: Stats?
     var error = ""
+}
+
+struct Stats: Decodable {
+    var totalRequests: Int
+    var totalInputTokens: Int
+    var totalOutputTokens: Int
+    enum CodingKeys: String, CodingKey {
+        case totalRequests = "total_requests", totalInputTokens = "total_input_tokens", totalOutputTokens = "total_output_tokens"
+    }
+}
+
+enum ChatDelta { case content(String), reasoning(String) }
+
+struct ChatError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
+private struct ChatChunk: Decodable {
+    var choices: [Choice]
+    struct Choice: Decodable { var delta: Delta }
+    struct Delta: Decodable {
+        var content: String?
+        var reasoning: String?
+        var reasoningContent: String?
+        enum CodingKeys: String, CodingKey { case content, reasoning, reasoningContent = "reasoning_content" }
+    }
 }
 
 // Wire formats — only the fields Herd reads.
@@ -75,9 +103,10 @@ struct LlamaSwapClient {
         async let models: ModelsResponse? = try? get("/v1/models")
         async let running: RunningResponse? = try? get("/running")
         async let version: VersionResponse? = try? get("/api/version")
-        let (m, r, v) = await (models, running, version)
+        async let stats: Stats? = try? get("/api/metrics/stats")
+        let (m, r, v, st) = await (models, running, version, stats)
         guard m != nil || r != nil else { throw URLError(.cannotConnectToHost) }
-        return HostSnapshot(online: true, version: v?.version ?? "", models: mergeModels(m, r),
+        return HostSnapshot(online: true, version: v?.version ?? "", models: mergeModels(m, r), stats: st,
                             error: r == nil ? "Could not read /running — load status is approximate" : "")
     }
 
@@ -92,6 +121,49 @@ struct LlamaSwapClient {
         var req = URLRequest(url: url("/api/models/unload/\(encode(id))"))
         req.httpMethod = "POST"
         _ = try await URLSession.shared.data(for: req)
+    }
+
+    /// Buffered log history, ANSI colour codes stripped, capped at the last 60k chars.
+    func logs() async throws -> String {
+        var req = URLRequest(url: url("/logs"))
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let text = String(decoding: data, as: UTF8.self).replacing(/\u{1B}\[[0-9;]*[A-Za-z]/, with: "")
+        return String(text.suffix(60_000))
+    }
+
+    /// Streams a chat completion as content/reasoning deltas. Ends on `data: [DONE]`
+    /// or when the consuming task is cancelled, which also cancels the request.
+    func chat(model: String, messages: [(role: String, content: String)]) -> AsyncThrowingStream<ChatDelta, Error> {
+        AsyncThrowingStream { cont in
+            let task = Task {
+                do {
+                    var req = URLRequest(url: url("/v1/chat/completions"))
+                    req.httpMethod = "POST"
+                    req.timeoutInterval = 600   // idle timeout — a cold model can take minutes before its first token
+                    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    let body: [String: Any] = ["model": model, "stream": true,
+                                               "messages": messages.map { ["role": $0.role, "content": $0.content] }]
+                    req.httpBody = try JSONSerialization.data(withJSONObject: body)
+                    let (bytes, resp) = try await URLSession.shared.bytes(for: req)
+                    if let code = (resp as? HTTPURLResponse)?.statusCode, code >= 400 {
+                        var text = ""
+                        for try await line in bytes.lines { text += line }
+                        throw ChatError(message: "HTTP \(code): \(text.prefix(300))")
+                    }
+                    for try await line in bytes.lines {
+                        guard line.hasPrefix("data:") else { continue }
+                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                        if payload == "[DONE]" { break }
+                        guard let d = try? JSONDecoder().decode(ChatChunk.self, from: Data(payload.utf8)).choices.first?.delta else { continue }
+                        if let r = d.reasoningContent ?? d.reasoning, !r.isEmpty { cont.yield(.reasoning(r)) }
+                        if let c = d.content, !c.isEmpty { cont.yield(.content(c)) }
+                    }
+                    cont.finish()
+                } catch { cont.finish(throwing: error) }
+            }
+            cont.onTermination = { _ in task.cancel() }
+        }
     }
 
     private func url(_ path: String) -> URL { URL(string: path, relativeTo: base)!.absoluteURL }

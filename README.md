@@ -26,7 +26,7 @@ python3 -m http.server 8080
 cd mac && xcodegen generate && open Herd.xcodeproj
 ```
 
-Hosts persist in `UserDefaults` under the same `herd.hosts.v1` key and JSON shape the web page uses in localStorage. Right-click a host to remove it. Not ported yet: chat, logs, activity table, theming.
+Hosts persist in `UserDefaults` under the same `herd.hosts.v1` key and JSON shape the web page uses in localStorage. Right-click a host to remove it; "logs" opens a live pane, Chat opens a streaming inspector. Not ported yet: activity table, theming, emoji/colors, search and filters.
 
 Then open http://localhost:8080. (Opening `index.html` directly also works.)
 

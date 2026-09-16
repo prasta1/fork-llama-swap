@@ -25,7 +25,18 @@ struct ContentView: View {
                 }
                 TableColumn("State") { stateTag($0) }.width(100)
                 TableColumn("") { actionButton($0) }.width(90)
+                TableColumn("") { row in
+                    Button("Chat") { store.openChat(row.host, row.model.id) }
+                        .disabled(!(store.data[row.host.id]?.online ?? false))
+                }.width(60)
             }
+            if store.logsHost != nil {
+                Divider()
+                logsPane
+            }
+        }
+        .inspector(isPresented: Binding(get: { store.chat != nil }, set: { if !$0 { store.closeChat() } })) {
+            ChatPanel().inspectorColumnWidth(min: 280, ideal: 380, max: 600)
         }
         .toolbar {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.pollAll() } }
@@ -44,8 +55,10 @@ struct ContentView: View {
                     Circle().fill(d.map { $0.online ? Color.green : .red } ?? .gray).frame(width: 8, height: 8)
                     Text(h.name).fontWeight(.medium)
                     if let d, d.online {
-                        Text("\(d.version) · \(d.models.count) models").foregroundStyle(.secondary)
+                        Text("\(d.version) · \(d.models.count) models" + (d.stats.map { " · \($0.totalRequests) req · \(compact($0.totalInputTokens)) in / \(compact($0.totalOutputTokens)) out" } ?? ""))
+                            .foregroundStyle(.secondary)
                     }
+                    Button("logs") { store.openLogs(h) }.buttonStyle(.link).font(.caption)
                 }
                 .help(d?.error.isEmpty == false ? d!.error : h.url)
                 .contextMenu {
@@ -62,6 +75,31 @@ struct ContentView: View {
         }
         .font(.callout)
         .padding(12)
+    }
+
+    private func compact(_ n: Int) -> String { n.formatted(.number.notation(.compactName)) }
+
+    private var logsPane: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Logs · \(store.logsHost?.name ?? "")").font(.callout.weight(.medium))
+                Spacer()
+                Button("Close") { store.closeLogs() }
+            }
+            .padding(8)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(store.logsText)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .id("end")
+                }
+                .onChange(of: store.logsText) { proxy.scrollTo("end", anchor: .bottom) }
+            }
+        }
+        .frame(height: 220)
     }
 
     private func stateTag(_ row: Row) -> some View {
@@ -113,5 +151,53 @@ struct AddHostSheet: View {
         }
         .padding(20)
         .frame(width: 400)
+    }
+}
+
+struct ChatPanel: View {
+    @Environment(Store.self) private var store
+
+    var body: some View {
+        if let chat = store.chat {
+            VStack(spacing: 0) {
+                HStack(spacing: 4) {
+                    Text(chat.model).fontWeight(.medium).lineLimit(1)
+                    Text("· \(chat.host.name)").foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(10)
+                Divider()
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(chat.messages) { m in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(m.role).font(.caption).foregroundStyle(.secondary)
+                                    if !m.reasoning.isEmpty {
+                                        Text(m.reasoning).italic().foregroundStyle(.secondary)
+                                    }
+                                    Text(m.content.isEmpty && chat.streaming && m.role == "assistant" ? "…" : m.content)
+                                }
+                                .textSelection(.enabled)
+                                .id(m.id)
+                            }
+                        }
+                        .padding(10)
+                    }
+                    .onChange(of: chat.messages.last?.content) { proxy.scrollTo(chat.messages.last?.id, anchor: .bottom) }
+                }
+                if !chat.error.isEmpty {
+                    Text(chat.error).font(.caption).foregroundStyle(.red).padding(.horizontal, 10)
+                }
+                Divider()
+                HStack {
+                    TextField("Message", text: Binding(get: { store.chat?.input ?? "" }, set: { store.chat?.input = $0 }))
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { store.sendChat() }
+                    Button(chat.streaming ? "Stop" : "Send") { chat.streaming ? store.stopChat() : store.sendChat() }
+                }
+                .padding(10)
+            }
+        }
     }
 }
