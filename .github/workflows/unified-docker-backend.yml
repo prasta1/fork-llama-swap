@@ -204,7 +204,7 @@ jobs:
           AUDIO_REF: ${{ inputs.audio_hash }}
           IK_LLAMA_REF: ${{ inputs.ik_llama_hash }}
           LS_VERSION: ${{ inputs.ls_hash }}
-          DOCKER_IMAGE_TAG: ghcr.io/mostlygeek/llama-swap:unified-${{ inputs.variant }}
+          DOCKER_IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/llama-swap:unified-${{ inputs.variant }}
           # When running under act, use the local builder that has warm ccache.
           # On GitHub Actions, BUILDX_BUILDER is unset so docker uses the builder
           # created by setup-buildx-action above.

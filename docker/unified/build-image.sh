@@ -84,7 +84,12 @@ DATE_TAG="${DATE_TAG:-}"
 # commit, so sharing the package would bury :unified-cuda under thousands of
 # :art-* tags. It also keeps them out of reach of the delete-untagged cleanup
 # in containers.yml, which is scoped to `package: llama-swap`.
-ARTIFACT_REPO="${ARTIFACT_REPO:-ghcr.io/mostlygeek/llama-swap-build}"
+#
+# In CI, GITHUB_REPOSITORY is "owner/repo" — derive the owner so forks push
+# to their own namespace rather than hardcoded "mostlygeek". Falls back to
+# mostlygeek for local builds outside of GitHub Actions.
+_GH_OWNER="${GITHUB_REPOSITORY:-mostlygeek/llama-swap}"
+ARTIFACT_REPO="${ARTIFACT_REPO:-ghcr.io/${_GH_OWNER%%/*}/llama-swap-build}"
 
 # Upstream projects compiled into the image.
 ALL_PROJECTS=(whisper sd audio llama ik-llama)
@@ -144,7 +149,7 @@ for arg in "$@"; do
             echo "                       (default: 12.9.1 for --cuda, 13.3.1 for --cuda13)"
             echo "  DATE_TAG             Date suffix for published tags (default: today, UTC)"
             echo "  ARTIFACT_REPO        Registry for base and artifacts images"
-            echo "                       (default: ghcr.io/mostlygeek/llama-swap-build)"
+            echo "                       (default: ghcr.io/<repo-owner>/llama-swap-build)"
             exit 0
             ;;
     esac

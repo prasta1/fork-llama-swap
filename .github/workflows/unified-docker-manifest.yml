@@ -52,7 +52,7 @@ jobs:
           VARIANT: ${{ inputs.variant }}
           PLATFORMS: ${{ inputs.platforms }}
           DATE_TAG: ${{ inputs.date_tag }}
-          DOCKER_IMAGE_TAG: ghcr.io/mostlygeek/llama-swap:unified-${{ inputs.variant }}
+          DOCKER_IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/llama-swap:unified-${{ inputs.variant }}
         run: |
           chmod +x docker/unified/build-image.sh
           docker/unified/build-image.sh \
