@@ -77,6 +77,29 @@ describe("hardware api", () => {
 });
 
 describe("api store event handling", () => {
+  it("anchors model uptime to the browser clock on receipt", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T12:00:00Z"));
+    try {
+      handleAPIEventMessage(
+        JSON.stringify({
+          type: "modelStatus",
+          data: JSON.stringify([
+            // readySince is an hour in the future, as a server clock that runs
+            // ahead would report it; uptimeMs is what the UI counts from.
+            { id: "ready", state: "ready", readySince: "2026-09-26T13:00:00Z", uptimeMs: 90_000 },
+            { id: "stopped", state: "stopped" },
+          ]),
+        })
+      );
+      const byId = Object.fromEntries(get(models).map((m) => [m.id, m]));
+      expect(byId.ready.readyAt).toBe(Date.parse("2026-09-26T12:00:00Z") - 90_000);
+      expect(byId.stopped.readyAt).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("parses inflight request entries", () => {
     inFlightRequests.set(0);
     inflightRequestEntries.set([]);
@@ -221,6 +244,7 @@ describe("api store event handling", () => {
             id: "real",
             name: "Real",
             capabilities: { vision: true },
+            architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] },
             meta: { llamaswap: { type: "model", aliases: ["variant", "alternate"] } },
           },
           {
@@ -258,7 +282,12 @@ describe("api store event handling", () => {
     expect(get(playgroundModels).find((model) => model.id === "real")).toMatchObject({
       aliases: ["variant", "alternate"],
       capabilities: { vision: true },
+      modalities: { in: ["text", "image"], out: ["text"] },
       playgroundType: "model",
+    });
+    // Models without an architecture block report no modalities at all.
+    expect(get(playgroundModels).find((model) => model.id === "remote/remote-model")).toMatchObject({
+      modalities: { in: [], out: [] },
     });
     expect(get(playgroundModels).find((model) => model.id === "remote/remote-model")).toMatchObject({
       peerID: "remote",

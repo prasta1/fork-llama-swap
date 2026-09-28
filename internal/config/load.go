@@ -105,10 +105,12 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 		config.Upstream.IgnorePaths = DefaultUpstreamIgnorePaths()
 	}
 
-	switch config.LogToStdout {
-	case LogToStdoutProxy, LogToStdoutUpstream, LogToStdoutBoth, LogToStdoutNone:
-	default:
-		return Config{}, fmt.Errorf("logToStdout must be one of: proxy, upstream, both, none")
+	if err := config.Security.CORS.Validate(); err != nil {
+		return Config{}, fmt.Errorf("security.cors: %w", err)
+	}
+
+	if _, _, _, err := ParseLogToStdout(config.LogToStdout); err != nil {
+		return Config{}, err
 	}
 
 	// Populate the aliases map

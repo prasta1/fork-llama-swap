@@ -15,9 +15,9 @@
   import ChatMessageComponent from "./ChatMessage.svelte";
   import type { WorkItem } from "./AgentWork.svelte";
   import ModelSelector from "./ModelSelector.svelte";
-  import ExpandableTextarea from "./ExpandableTextarea.svelte";
+  import ChatComposer from "./ChatComposer.svelte";
   import EmptyState from "../EmptyState.svelte";
-  import { RefreshCw, TriangleAlert, X } from "@lucide/svelte";
+  import { RefreshCw, SquarePen, TriangleAlert, X } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
 
   /**
@@ -84,6 +84,7 @@
         finalAssistantIdx: number;
         userMessageIdx: number | undefined;
         isCurrent: boolean;
+        interrupted?: "error" | "cancelled";
       };
 
   // name -> friendly label, so tool-call cards can show it without re-deriving.
@@ -169,6 +170,8 @@
         finalAssistantIdx,
         userMessageIdx,
         isCurrent: finalAssistantIdx === messages.length - 1,
+        // A cancel can land on a tool result, so check the whole run.
+        interrupted: group.findLast(({ message }) => message.interrupted)?.message.interrupted,
       });
     }
 
@@ -307,7 +310,7 @@
   }
 
   function appendError(message: string) {
-    patchLast({ content: lastText() + `\n\n**Error:** ${message}` });
+    patchLast({ content: lastText() + `\n\n**Error:** ${message}`, interrupted: "error" });
   }
 
   function handleTurnError(error: unknown) {
@@ -316,6 +319,7 @@
       if (isReasoning && reasoningStartTime > 0) {
         patchLast({ reasoningTimeMs: Date.now() - reasoningStartTime });
       }
+      patchLast({ interrupted: "cancelled" });
       return;
     }
     appendError(error instanceof Error ? error.message : "An error occurred");
@@ -444,13 +448,17 @@
         case "error":
           appendError(event.message);
           break;
+
+        case "done":
+          if (event.reason === "aborted") patchLast({ interrupted: "cancelled" });
+          break;
       }
     }
 
-    // An abort, or a final turn that produced nothing, can leave the trailing
-    // placeholder empty.
+    // A final turn that produced nothing can leave the trailing placeholder
+    // empty. A cancelled one is kept so the card can offer a retry.
     const last = messages[messages.length - 1];
-    if (last?.role === "assistant" && !last.tool_calls?.length && !last.reasoning_content && lastText() === "") {
+    if (last?.role === "assistant" && !last.interrupted && !last.tool_calls?.length && !last.reasoning_content && lastText() === "") {
       messages = messages.slice(0, -1);
     }
   }
@@ -478,19 +486,19 @@
 
 <div class="flex h-full flex-col">
   <!-- Model selector and controls -->
-  <div class="mb-4 shrink-0">
-    <div class="flex flex-wrap gap-2">
+  <div class="mb-3 shrink-0">
+    <div class="flex gap-2">
       <ModelSelector
         bind:value={$selectedModelStore}
         placeholder="Select a tool-capable model..."
         disabled={isStreaming}
-        capabilities={["function_calling"]}
+        match={{ capabilities: ["function_calling"] }}
       />
-      <Button variant="outline" onclick={newChat} disabled={messages.length === 0 && !isStreaming}>
-        New Chat
+      <Button variant="outline" class="shrink-0" onclick={newChat} disabled={messages.length === 0 && !isStreaming} title="New chat">
+        <SquarePen />
+        <span class="hidden sm:inline">New Chat</span>
       </Button>
     </div>
-
   </div>
 
   {#if !$hasListedModels}
@@ -503,7 +511,7 @@
   {:else}
     <!-- Messages area -->
     <div
-      class="mb-4 flex-1 overflow-y-auto px-2"
+      class="mb-3 flex-1 overflow-y-auto px-1 sm:px-2"
       bind:this={messagesContainer}
       onscroll={handleMessagesScroll}
     >
@@ -547,6 +555,7 @@
           </div>
         </EmptyState>
       {:else}
+        <div class="mx-auto w-full max-w-3xl py-2">
         {#each displayMessages as item, idx (idx)}
           {#if item.kind === "agent"}
             <ChatMessageComponent
@@ -558,6 +567,7 @@
               stats={$showGenerationStats ? item.stats : undefined}
               statsLive={isStreaming && item.isCurrent && $showGenerationStats}
               toolCallCount={item.toolCallCount}
+              interrupted={item.interrupted}
               onRegenerate={!isStreaming && item.userMessageIdx !== undefined
                 ? () => regenerateFromIndex(item.userMessageIdx!)
                 : undefined}
@@ -580,11 +590,12 @@
             {agentNotice}
           </div>
         {/if}
+        </div>
       {/if}
     </div>
 
     <!-- Input area -->
-    <div class="shrink-0">
+    <div class="mx-auto w-full max-w-3xl shrink-0 px-1 sm:px-2">
       {#if showJinjaHint}
         <div class="mb-2 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
           <TriangleAlert class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -600,23 +611,17 @@
         </div>
       {/if}
 
-      <div class="flex gap-2">
-        <ExpandableTextarea
-          bind:ref={inputRef}
-          bind:value={userInput}
-          placeholder="Ask a question about llama-swap..."
-          rows={3}
-          onkeydown={handleKeyDown}
-          disabled={isStreaming || !$selectedModelStore}
-        />
-        <div class="flex flex-col gap-2">
-          {#if isStreaming}
-            <Button variant="destructive" onclick={cancelStreaming}>Cancel</Button>
-          {:else}
-            <Button onclick={sendMessage} disabled={!userInput.trim() || !canSend}>Send</Button>
-          {/if}
-        </div>
-      </div>
+      <ChatComposer
+        bind:ref={inputRef}
+        bind:value={userInput}
+        placeholder="Ask about llama-swap..."
+        onkeydown={handleKeyDown}
+        disabled={isStreaming || !$selectedModelStore}
+        streaming={isStreaming}
+        canSend={Boolean(userInput.trim()) && canSend}
+        onsend={sendMessage}
+        onstop={cancelStreaming}
+      />
     </div>
   {/if}
 </div>

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mostlygeek/llama-swap/internal/config"
 	"github.com/mostlygeek/llama-swap/internal/logmon"
@@ -35,8 +36,10 @@ func TestServer_HandleListModels(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://example.com" {
-		t.Errorf("Access-Control-Allow-Origin = %q", got)
+	// The global CORS middleware sets this on every response now, so the
+	// listing no longer echoes the request Origin back.
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Access-Control-Allow-Origin = %q want *", got)
 	}
 
 	var resp struct {
@@ -227,185 +230,6 @@ func TestServer_HandleUpstream(t *testing.T) {
 		}
 	})
 }
-
-func TestServer_HandleComfyUI(t *testing.T) {
-	local := newStubRouter([]string{config.ComfyUIModelID}, "")
-	var gotPath string
-	var gotQuery string
-	var gotContext swaputil.ReqContextData
-	serveCalls := 0
-	local.serveHTTP = func(w http.ResponseWriter, r *http.Request) {
-		serveCalls++
-		gotPath = r.URL.EscapedPath()
-		gotQuery = r.URL.RawQuery
-		gotContext, _ = swaputil.ReadContext(r.Context())
-		w.WriteHeader(http.StatusOK)
-	}
-	s := newTestServer(local, newStubRouter(nil, ""))
-	s.cfg = config.Config{Models: map[string]config.ModelConfig{config.ComfyUIModelID: {}}}
-	s.routes()
-
-	t.Run("redirects bare path", func(t *testing.T) {
-		for _, tt := range []struct {
-			method string
-			status int
-		}{
-			{method: http.MethodGet, status: http.StatusMovedPermanently},
-			{method: http.MethodHead, status: http.StatusMovedPermanently},
-			{method: http.MethodPost, status: http.StatusPermanentRedirect},
-		} {
-			w := httptest.NewRecorder()
-			s.ServeHTTP(w, httptest.NewRequest(tt.method, "/comfyui?token=value", nil))
-			if w.Code != tt.status {
-				t.Errorf("%s status=%d want %d", tt.method, w.Code, tt.status)
-			}
-			if got := w.Header().Get("Location"); got != "/comfyui/?token=value" {
-				t.Errorf("%s Location=%q want /comfyui/?token=value", tt.method, got)
-			}
-		}
-	})
-
-	t.Run("only root starts unloaded model", func(t *testing.T) {
-		local.running = nil
-
-		w := httptest.NewRecorder()
-		s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/comfyui/?token=value", nil))
-		if w.Code != http.StatusOK {
-			t.Fatalf("root status=%d want 200 body=%q", w.Code, w.Body.String())
-		}
-		if gotPath != "/" || gotQuery != "token=value" {
-			t.Errorf("root path=%q query=%q want path=/ query=token=value", gotPath, gotQuery)
-		}
-
-		before := serveCalls
-		w = httptest.NewRecorder()
-		s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/comfyui/api/prompt", nil))
-		if w.Code != http.StatusConflict {
-			t.Fatalf("subpath status=%d want 409 body=%q", w.Code, w.Body.String())
-		}
-		if serveCalls != before {
-			t.Fatal("unloaded model received a non-root ComfyUI request")
-		}
-		if !strings.Contains(w.Body.String(), "only /comfyui/ can start it") {
-			t.Errorf("body=%q missing root-path explanation", w.Body.String())
-		}
-
-		local.running = map[string]process.ProcessState{config.ComfyUIModelID: process.StateStarting}
-		w = httptest.NewRecorder()
-		s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/comfyui/api/prompt", nil))
-		if w.Code != http.StatusConflict {
-			t.Fatalf("starting model status=%d want 409 body=%q", w.Code, w.Body.String())
-		}
-		if serveCalls != before {
-			t.Fatal("starting model received a non-root ComfyUI request")
-		}
-	})
-
-	t.Run("proxies fixed model and preserves escaped path", func(t *testing.T) {
-		local.running = map[string]process.ProcessState{config.ComfyUIModelID: process.StateReady}
-		for _, tt := range []struct {
-			name      string
-			target    string
-			wantPath  string
-			wantQuery string
-		}{
-			{
-				name:      "encoded slash",
-				target:    "/comfyui/api/userdata/workflows%2Fexample.json?preview=1",
-				wantPath:  "/api/userdata/workflows%2Fexample.json",
-				wantQuery: "preview=1",
-			},
-			{
-				name:     "double encoded slash",
-				target:   "/comfyui/api/userdata/workflows%252Fexample.json",
-				wantPath: "/api/userdata/workflows%252Fexample.json",
-			},
-			{
-				name:     "utf8 and encoded slash",
-				target:   "/comfyui/api/%E2%9C%93%2Ffile.json",
-				wantPath: "/api/%E2%9C%93%2Ffile.json",
-			},
-		} {
-			t.Run(tt.name, func(t *testing.T) {
-				w := httptest.NewRecorder()
-				req := httptest.NewRequest(http.MethodPost, tt.target, nil)
-				s.ServeHTTP(w, req)
-				if w.Code != http.StatusOK {
-					t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
-				}
-				if gotPath != tt.wantPath {
-					t.Errorf("path=%q want %q", gotPath, tt.wantPath)
-				}
-				if gotQuery != tt.wantQuery {
-					t.Errorf("query=%q want %q", gotQuery, tt.wantQuery)
-				}
-			})
-		}
-		if gotContext.Model != config.ComfyUIModelID || gotContext.ModelID != config.ComfyUIModelID {
-			t.Errorf("context=%+v want model %s", gotContext, config.ComfyUIModelID)
-		}
-	})
-}
-
-func TestServer_HandleComfyUI_RequiresExactLocalModel(t *testing.T) {
-	tests := []struct {
-		name  string
-		cfg   config.Config
-		local *stubRouter
-		peer  *stubRouter
-	}{
-		{
-			name:  "missing model",
-			cfg:   config.Config{},
-			local: newStubRouter(nil, ""),
-			peer:  newStubRouter(nil, ""),
-		},
-		{
-			name:  "peer model",
-			cfg:   config.Config{Models: map[string]config.ModelConfig{}},
-			local: newStubRouter(nil, ""),
-			peer:  newStubRouter([]string{config.ComfyUIModelID}, "peer"),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := newTestServer(tt.local, tt.peer)
-			s.cfg = tt.cfg
-			s.routes()
-			w := httptest.NewRecorder()
-			s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/comfyui/", nil))
-			if w.Code != http.StatusNotFound {
-				t.Fatalf("status=%d want 404 body=%q", w.Code, w.Body.String())
-			}
-		})
-	}
-}
-
-func TestServer_HandleComfyUI_UsesAuthentication(t *testing.T) {
-	local := newStubRouter([]string{config.ComfyUIModelID}, "ok")
-	s := newTestServer(local, newStubRouter(nil, ""))
-	s.cfg = config.Config{
-		RequiredAPIKeys: []string{"secret"},
-		Models:          map[string]config.ModelConfig{config.ComfyUIModelID: {}},
-	}
-	s.routes()
-
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/comfyui/", nil))
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated status=%d want 401", w.Code)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/comfyui/", nil)
-	req.Header.Set("Authorization", "Bearer secret")
-	w = httptest.NewRecorder()
-	s.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("authenticated status=%d want 200 body=%q", w.Code, w.Body.String())
-	}
-}
-
 func TestProxy_HandleUpstreamPreservesEscapedPath(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -464,16 +288,15 @@ func TestProxy_HandleUpstreamPreservesEscapedPath(t *testing.T) {
 func upstreamMetricsServer(t *testing.T, response string) *Server {
 	t.Helper()
 	cfg := config.Config{Models: map[string]config.ModelConfig{"m1": {}}}
-	proxylog := logmon.NewWriter(io.Discard)
+	logs := logmon.NewGroup(io.Discard, true, true, true)
+	proxylog := logs.ProxyLogs
 	s := &Server{
-		cfg:         cfg,
-		muxlog:      logmon.NewWriter(io.Discard),
-		proxylog:    proxylog,
-		upstreamlog: logmon.NewWriter(io.Discard),
-		inflight:    newInflightTracker(),
-		metrics:     newTestMetricsMonitor(t, proxylog, 10, 0),
-		local:       newStubRouter([]string{"m1"}, response),
-		peer:        newStubRouter(nil, ""),
+		cfg:      cfg,
+		logs:     logs,
+		inflight: newInflightTracker(),
+		metrics:  newTestMetricsMonitor(t, proxylog, 10, 0),
+		local:    newStubRouter([]string{"m1"}, response),
+		peer:     newStubRouter(nil, ""),
 	}
 	s.routes()
 	return s
@@ -718,16 +541,15 @@ func TestServer_HandleUpstream_InflightIgnoresConfiguredWebsocket(t *testing.T) 
 func upstreamInflightServer(t *testing.T, local *stubRouter, mc config.ModelConfig) *Server {
 	t.Helper()
 	cfg := config.Config{Models: map[string]config.ModelConfig{"m1": mc}}
-	proxylog := logmon.NewWriter(io.Discard)
+	logs := logmon.NewGroup(io.Discard, true, true, true)
+	proxylog := logs.ProxyLogs
 	s := &Server{
-		cfg:         cfg,
-		muxlog:      logmon.NewWriter(io.Discard),
-		proxylog:    proxylog,
-		upstreamlog: logmon.NewWriter(io.Discard),
-		inflight:    newInflightTracker(),
-		metrics:     newTestMetricsMonitor(t, proxylog, 10, 0),
-		local:       local,
-		peer:        newStubRouter(nil, ""),
+		cfg:      cfg,
+		logs:     logs,
+		inflight: newInflightTracker(),
+		metrics:  newTestMetricsMonitor(t, proxylog, 10, 0),
+		local:    local,
+		peer:     newStubRouter(nil, ""),
 	}
 	s.routes()
 	return s
@@ -1056,6 +878,44 @@ func TestServer_ModelStatus_Capabilities(t *testing.T) {
 			t.Errorf("expected no context_length, got %d", m.ContextLength)
 		}
 	})
+}
+
+func TestServer_ModelStatus_ReadySince(t *testing.T) {
+	since := time.Date(2026, 9, 25, 6, 41, 37, 0, time.UTC)
+	local := newStubRouter(nil, "")
+	local.running = map[string]process.ProcessState{
+		"ready":    process.StateReady,
+		"stopping": process.StateStopping,
+	}
+	// stopping still has a timestamp to check that only ready models report it.
+	local.readySince = map[string]time.Time{"ready": since, "stopping": since}
+	s := newTestServer(local, newStubRouter(nil, ""))
+	s.cfg = config.Config{Models: map[string]config.ModelConfig{
+		"ready": {}, "stopping": {}, "stopped": {},
+	}}
+
+	got := make(map[string]string)
+	uptime := make(map[string]int64)
+	for _, m := range s.modelStatus() {
+		got[m.Id] = m.ReadySince
+		uptime[m.Id] = m.UptimeMs
+	}
+	if want := time.Since(since).Milliseconds(); uptime["ready"] < want-1000 || uptime["ready"] > want+1000 {
+		t.Errorf("ready uptimeMs = %d, want about %d", uptime["ready"], want)
+	}
+	if uptime["stopping"] != 0 || uptime["stopped"] != 0 {
+		t.Errorf("uptimeMs = %v, want 0 for models that are not ready", uptime)
+	}
+	want := map[string]string{
+		"ready":    "2026-09-25T06:41:37Z",
+		"stopping": "",
+		"stopped":  "",
+	}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("%s readySince = %q, want %q", id, got[id], w)
+		}
+	}
 }
 
 func stringSliceEqual(a, b []string) bool {

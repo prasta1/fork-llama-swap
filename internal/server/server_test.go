@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mostlygeek/llama-swap/internal/capcompat"
 	"github.com/mostlygeek/llama-swap/internal/config"
 	"github.com/mostlygeek/llama-swap/internal/docagent"
 	"github.com/mostlygeek/llama-swap/internal/event"
@@ -20,6 +21,7 @@ import (
 	"github.com/mostlygeek/llama-swap/internal/process"
 	"github.com/mostlygeek/llama-swap/internal/router"
 	"github.com/mostlygeek/llama-swap/internal/store"
+	"github.com/mostlygeek/llama-swap/internal/store/sqlite"
 	"github.com/mostlygeek/llama-swap/internal/swaputil"
 )
 
@@ -30,6 +32,7 @@ type stubRouter struct {
 	serveHTTP     func(http.ResponseWriter, *http.Request)
 	shutdownCalls atomic.Int32
 	running       map[string]process.ProcessState
+	readySince    map[string]time.Time
 	unloadCalls   atomic.Int32
 	unloadModels  []string
 	unloadTimeout time.Duration
@@ -56,6 +59,13 @@ func (s *stubRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *stubRouter) RunningModels() map[string]process.ProcessState { return s.running }
+func (s *stubRouter) RunningStatus() map[string]process.Status {
+	out := make(map[string]process.Status, len(s.running))
+	for id, st := range s.running {
+		out[id] = process.Status{State: st, ReadySince: s.readySince[id]}
+	}
+	return out
+}
 func (s *stubRouter) Unload(timeout time.Duration, models ...string) {
 	s.unloadCalls.Add(1)
 	s.unloadTimeout = timeout
@@ -79,19 +89,19 @@ func newTestServer(local router.LocalRouter, peer router.Router) *Server {
 // tests that exercise config-driven middleware wiring in routes().
 func newTestServerWithConfig(cfg config.Config, local router.LocalRouter, peer router.Router) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
-	proxylog := logmon.NewWriter(io.Discard)
-	st, err := store.New("")
+	logs := logmon.NewGroup(io.Discard, true, true, true)
+	proxylog := logs.ProxyLogs
+	st, err := sqlite.New("")
 	if err != nil {
 		panic(err)
 	}
 	s := &Server{
 		cfg:         cfg,
-		muxlog:      logmon.NewWriter(io.Discard),
-		proxylog:    proxylog,
-		upstreamlog: logmon.NewWriter(io.Discard),
+		logs:        logs,
 		inflight:    newInflightTracker(),
 		metrics:     newMetricsMonitor(proxylog, 0, 0, st),
 		store:       st,
+		capcompat:   capcompat.New(st.Cache(), proxylog),
 		local:       local,
 		peer:        peer,
 		shutdownCtx: ctx,
@@ -125,9 +135,9 @@ var testClock = time.Date(2026, 3, 14, 15, 9, 26, 0, time.UTC)
 
 func newTestMetricsMonitor(t *testing.T, logger *logmon.Monitor, maxMetrics int, captureBufferMB int) *metricsMonitor {
 	t.Helper()
-	st, err := store.New("")
+	st, err := sqlite.New("")
 	if err != nil {
-		t.Fatalf("store.New: %v", err)
+		t.Fatalf("sqlite.New: %v", err)
 	}
 	t.Cleanup(func() {
 		if err := st.Close(); err != nil {
@@ -139,7 +149,7 @@ func newTestMetricsMonitor(t *testing.T, logger *logmon.Monitor, maxMetrics int,
 
 func metricsEntries(t *testing.T, mm *metricsMonitor) []ActivityLogEntry {
 	t.Helper()
-	page, err := mm.store.ListActivity(context.Background(), store.ActivityQuery{Limit: 1000, Page: 1})
+	page, err := mm.store.Activity().List(context.Background(), store.ActivityQuery{Limit: 1000, Page: 1})
 	if err != nil {
 		t.Fatalf("ListActivity: %v", err)
 	}
@@ -164,15 +174,15 @@ func audioTaskRequest(model string) *http.Request {
 }
 
 func TestServer_New_GroupConfig(t *testing.T) {
-	discard := logmon.NewWriter(io.Discard)
+	discard := logmon.NewGroup(io.Discard, true, true, true)
 	cfg := config.Config{HealthCheckTimeout: 15}
 	cfg.Routing.Router.Use = "group"
-	st, err := store.New("")
+	st, err := sqlite.New("")
 	if err != nil {
-		t.Fatalf("store.New: %v", err)
+		t.Fatalf("sqlite.New: %v", err)
 	}
 	defer st.Close()
-	s, err := New(cfg, discard, discard, discard, nil, st, BuildInfo{}, nil, nil)
+	s, err := New(cfg, discard, nil, st, BuildInfo{}, nil, nil)
 	if err != nil {
 		t.Fatalf("New (group): %v", err)
 	}
@@ -185,7 +195,7 @@ func TestServer_New_GroupConfig(t *testing.T) {
 }
 
 func TestServer_New_MatrixConfig(t *testing.T) {
-	discard := logmon.NewWriter(io.Discard)
+	discard := logmon.NewGroup(io.Discard, true, true, true)
 	cfg := config.Config{HealthCheckTimeout: 15}
 	cfg.Models = map[string]config.ModelConfig{
 		"model": {
@@ -197,12 +207,12 @@ func TestServer_New_MatrixConfig(t *testing.T) {
 	cfg.Routing.Router.Settings.Matrix = &config.MatrixConfig{
 		Sets: config.OrderedSets{{Name: "single", DSL: "model"}},
 	}
-	st, err := store.New("")
+	st, err := sqlite.New("")
 	if err != nil {
-		t.Fatalf("store.New: %v", err)
+		t.Fatalf("sqlite.New: %v", err)
 	}
 	defer st.Close()
-	s, err := New(cfg, discard, discard, discard, nil, st, BuildInfo{}, nil, nil)
+	s, err := New(cfg, discard, nil, st, BuildInfo{}, nil, nil)
 	if err != nil {
 		t.Fatalf("New (matrix): %v", err)
 	}
@@ -389,21 +399,6 @@ func TestServer_Health(t *testing.T) {
 	}
 }
 
-func TestServer_CORSPreflight(t *testing.T) {
-	s := newTestServer(newStubRouter(nil, ""), newStubRouter(nil, ""))
-
-	req := httptest.NewRequest(http.MethodOptions, "/v1/chat/completions", nil)
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status=%d want 204", w.Code)
-	}
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
-		t.Errorf("Access-Control-Allow-Origin=%q want *", got)
-	}
-}
-
 func TestServer_Unload(t *testing.T) {
 	local := newStubRouter([]string{"m1"}, "")
 	s := newTestServer(local, newStubRouter(nil, ""))
@@ -494,18 +489,18 @@ func TestServer_Preload(t *testing.T) {
 
 // TestServer_New_OnStartupProfile verifies New activates the configured startup profile.
 func TestServer_New_OnStartupProfile(t *testing.T) {
-	discard := logmon.NewWriter(io.Discard)
+	discard := logmon.NewGroup(io.Discard, true, true, true)
 	cfg := config.Config{HealthCheckTimeout: 15}
 	cfg.Profiles = map[string]config.ProfileConfig{
 		"coding": {Pins: map[string]string{"llm-code": "model"}},
 	}
 	cfg.Hooks.OnStartup.Profile = "coding"
-	st, err := store.New("")
+	st, err := sqlite.New("")
 	if err != nil {
-		t.Fatalf("store.New: %v", err)
+		t.Fatalf("sqlite.New: %v", err)
 	}
 	defer st.Close()
-	s, err := New(cfg, discard, discard, discard, nil, st, BuildInfo{}, nil, nil)
+	s, err := New(cfg, discard, nil, st, BuildInfo{}, nil, nil)
 	if err != nil {
 		t.Fatalf("New (startup profile): %v", err)
 	}

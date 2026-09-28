@@ -204,7 +204,10 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		if len(mc.Aliases) > 0 {
 			internalMetadata["aliases"] = mc.Aliases
 		}
-		data = append(data, newRecord(id, mc.Name, mc.Description, mc.Metadata, mc.Capabilities, status, internalMetadata))
+		// Resolved once and reused for the aliases, which describe the same
+		// upstream and must not disagree with the model they point at.
+		caps := s.resolveCapabilities(r.Context(), id, mc)
+		data = append(data, newRecord(id, mc.Name, mc.Description, mc.Metadata, caps, status, internalMetadata))
 
 		if s.cfg.IncludeAliasesInList {
 			for _, alias := range mc.Aliases {
@@ -214,7 +217,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 						mc.Name,
 						mc.Description,
 						mc.Metadata,
-						mc.Capabilities,
+						caps,
 						status,
 						map[string]any{"type": "alias", "modelID": id},
 					))
@@ -314,11 +317,6 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		data = filtered
 	}
 
-	// Echo the Origin so browser clients can read the listing.
-	if origin := r.Header.Get("Origin"); origin != "" {
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"object": "list",
@@ -397,10 +395,10 @@ func (s *Server) startPreload() {
 	go func() {
 		for _, modelID := range models {
 			if !s.local.Handles(modelID) {
-				s.proxylog.Warnf("preload: model %s is not a local model, skipping", modelID)
+				s.logs.ProxyLogs.Warnf("preload: model %s is not a local model, skipping", modelID)
 				continue
 			}
-			s.proxylog.Infof("preloading model: %s", modelID)
+			s.logs.ProxyLogs.Infof("preloading model: %s", modelID)
 
 			req, err := http.NewRequestWithContext(s.shutdownCtx, http.MethodGet, "/", nil)
 			if err != nil {
@@ -413,7 +411,7 @@ func (s *Server) startPreload() {
 
 			success := dw.status < http.StatusBadRequest
 			if !success {
-				s.proxylog.Errorf("failed to preload model %s: status %d", modelID, dw.status)
+				s.logs.ProxyLogs.Errorf("failed to preload model %s: status %d", modelID, dw.status)
 			}
 			event.Emit(swaputil.ModelPreloadedEvent{ModelName: modelID, Success: success})
 		}
@@ -442,55 +440,6 @@ func handleRootRedirect(w http.ResponseWriter, r *http.Request) {
 
 func handleUpstreamRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ui/models", http.StatusFound)
-}
-
-func handleComfyUIRedirect(w http.ResponseWriter, r *http.Request) {
-	location := "/comfyui/"
-	if r.URL.RawQuery != "" {
-		location += "?" + r.URL.RawQuery
-	}
-	status := http.StatusPermanentRedirect
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
-		status = http.StatusMovedPermanently
-	}
-	http.Redirect(w, r, location, status)
-}
-
-// handleComfyUI proxies requests under /comfyui/ to the fixed local
-// ComfyUI model. Its compatibility settings are applied while loading config.
-func (s *Server) handleComfyUI(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.cfg.Models[config.ComfyUIModelID]; !ok || !s.local.Handles(config.ComfyUIModelID) {
-		swaputil.SendResponse(w, r, http.StatusNotFound, "local model "+config.ComfyUIModelID+" not found")
-		return
-	}
-
-	// Strip the /comfyui prefix before forwarding. URL.Path and PathValue are
-	// decoded, so retain the matching escaped suffix in RawPath exactly as the
-	// generic /upstream handler does.
-	remainingPath := "/" + strings.TrimPrefix(r.PathValue("comfyPath"), "/")
-	escapedRemaining := swaputil.EscapedPathSuffix(r.URL.EscapedPath(), "/comfyui")
-	r.URL.Path = remainingPath
-	r.URL.RawPath = escapedRemaining
-
-	// Only an explicit request for the ComfyUI root may start the model. Once
-	// it is unloaded, stale browser requests for assets, APIs, or websockets
-	// must not cause it to be loaded again.
-	if remainingPath != "/" {
-		state, ok := s.local.RunningModels()[config.ComfyUIModelID]
-		if !ok || state != process.StateReady {
-			swaputil.SendResponse(w, r, http.StatusConflict,
-				"model "+config.ComfyUIModelID+" is not loaded; only /comfyui/ can start it")
-			return
-		}
-	}
-
-	*r = *r.WithContext(swaputil.SetContext(r.Context(), swaputil.ReqContextData{
-		ApiKey:   swaputil.ExtractAPIKey(r),
-		Model:    config.ComfyUIModelID,
-		ModelID:  config.ComfyUIModelID,
-		Metadata: make(map[string]string),
-	}))
-	s.local.ServeHTTP(w, r)
 }
 
 // handleUpstream proxies ANY request under /upstream/<model>/<path> directly to
