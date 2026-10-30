@@ -66,7 +66,7 @@ func renderCapabilities(caps config.ModelCapConfig) (arch map[string]any, capsMa
 	}
 
 	// Build capabilities map only if there's something to put in it.
-	if hasIn || hasOut || caps.Tools || caps.Reranker {
+	if hasIn || hasOut || caps.Tools || caps.Reranker || caps.Embeddings {
 		capsMap = make(map[string]any)
 	}
 
@@ -97,6 +97,10 @@ func renderCapabilities(caps config.ModelCapConfig) (arch map[string]any, capsMa
 
 	if caps.Reranker {
 		capsMap["reranker"] = true
+	}
+
+	if caps.Embeddings {
+		capsMap["embeddings"] = true
 	}
 
 	if caps.Context > 0 {
@@ -398,6 +402,10 @@ func (s *Server) startPreload() {
 				s.logs.ProxyLogs.Warnf("preload: model %s is not a local model, skipping", modelID)
 				continue
 			}
+			if s.pause.Paused() {
+				s.logs.ProxyLogs.Infof("preload: inference is paused, skipping model %s", modelID)
+				continue
+			}
 			s.logs.ProxyLogs.Infof("preloading model: %s", modelID)
 
 			req, err := http.NewRequestWithContext(s.shutdownCtx, http.MethodGet, "/", nil)
@@ -434,12 +442,28 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func handleRootRedirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/ui", http.StatusFound)
+// redirectRelative sends a redirect whose Location header stays relative to
+// the URL the client requested. http.Redirect resolves its destination
+// against the server-visible request path, which drops the path prefix when
+// llama-swap runs behind a prefix-stripping reverse proxy (a browser resolves
+// a relative Location against the URL it actually asked for, so the prefix
+// survives). Target must not start with "/".
+func redirectRelative(w http.ResponseWriter, target string, code int) {
+	w.Header().Set("Location", target)
+	w.WriteHeader(code)
 }
 
+func handleRootRedirect(w http.ResponseWriter, r *http.Request) {
+	redirectRelative(w, "ui/", http.StatusFound)
+}
+
+// handleUpstreamRedirect sends /upstream to the Models page. The target uses
+// the hash router (ui/#/models) so the document stays mounted at <prefix>/ui/:
+// a path route (ui/models) would leave the UI's prefix detection in
+// ui/src/lib/apiPath.ts unable to recover the proxy prefix, disconnecting the
+// page behind a prefix-stripping reverse proxy.
 func handleUpstreamRedirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/ui/models", http.StatusFound)
+	redirectRelative(w, "ui/#/models", http.StatusFound)
 }
 
 // handleUpstream proxies ANY request under /upstream/<model>/<path> directly to
@@ -454,16 +478,27 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Redirect /upstream/model to /upstream/model/ so relative URLs in upstream
-	// responses resolve. 301 for GET/HEAD, 308 otherwise to preserve the method.
+	// responses resolve. The Location stays relative so the redirect keeps a
+	// reverse proxy's path prefix (see redirectRelative). 301 for GET/HEAD,
+	// 308 otherwise to preserve the method.
+	//
+	// The target is built from the last escaped segment of the requested URL,
+	// not from searchName: a slash name ("author/model") arriving as two
+	// segments would resolve "author/model/" against /upstream/author/ and
+	// double the path, and a colon alias ("model1:high") would parse as a URL
+	// scheme (RFC 3986 4.2). "./<segment>/" stays path-relative for both, and
+	// reusing the escaped segment keeps %2F-encoded names redirecting to the
+	// URL the client actually requested.
 	if remainingPath == "/" && !strings.HasSuffix(r.URL.Path, "/") {
-		newPath := "/upstream/" + searchName + "/"
+		escapedPath := r.URL.EscapedPath()
+		newPath := "./" + escapedPath[strings.LastIndex(escapedPath, "/")+1:] + "/"
 		if r.URL.RawQuery != "" {
 			newPath += "?" + r.URL.RawQuery
 		}
 		if r.Method == http.MethodGet || r.Method == http.MethodHead {
-			http.Redirect(w, r, newPath, http.StatusMovedPermanently)
+			redirectRelative(w, newPath, http.StatusMovedPermanently)
 		} else {
-			http.Redirect(w, r, newPath, http.StatusPermanentRedirect)
+			redirectRelative(w, newPath, http.StatusPermanentRedirect)
 		}
 		return
 	}
@@ -500,7 +535,7 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case s.local.Handles(modelID):
-		s.local.ServeHTTP(w, r)
+		s.serveLocal(w, r)
 	case s.peer.Handles(modelID):
 		s.peer.ServeHTTP(w, r)
 	default:

@@ -17,7 +17,9 @@ import (
 // config.
 
 func handleComfyUIRedirect(w http.ResponseWriter, r *http.Request) {
-	location := "/comfyui/"
+	// Relative Location so the redirect keeps a reverse proxy's path prefix
+	// (see redirectRelative).
+	location := "comfyui/"
 	if r.URL.RawQuery != "" {
 		location += "?" + r.URL.RawQuery
 	}
@@ -25,7 +27,7 @@ func handleComfyUIRedirect(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		status = http.StatusMovedPermanently
 	}
-	http.Redirect(w, r, location, status)
+	redirectRelative(w, location, status)
 }
 
 // comfyUIIgnorePaths are the paths under /comfyui/ that may not start an
@@ -87,5 +89,5 @@ func (s *Server) handleComfyUI(w http.ResponseWriter, r *http.Request) {
 		ModelID:  config.ComfyUIModelID,
 		Metadata: make(map[string]string),
 	}))
-	s.local.ServeHTTP(w, r)
+	s.serveLocal(w, r)
 }

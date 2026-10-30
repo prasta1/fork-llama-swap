@@ -14,7 +14,9 @@ import (
 // are registered in server.go.
 
 func handleAudioCppRedirect(w http.ResponseWriter, r *http.Request) {
-	location := "/audiocpp/"
+	// Relative Location so the redirect keeps a reverse proxy's path prefix
+	// (see redirectRelative).
+	location := "audiocpp/"
 	if r.URL.RawQuery != "" {
 		location += "?" + r.URL.RawQuery
 	}
@@ -22,7 +24,7 @@ func handleAudioCppRedirect(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		status = http.StatusMovedPermanently
 	}
-	http.Redirect(w, r, location, status)
+	redirectRelative(w, location, status)
 }
 
 // handleAudioCpp proxies requests under /audiocpp/ to the fixed local
@@ -47,5 +49,5 @@ func (s *Server) handleAudioCpp(w http.ResponseWriter, r *http.Request) {
 		ModelID:  config.AudioCppModelID,
 		Metadata: make(map[string]string),
 	}))
-	s.local.ServeHTTP(w, r)
+	s.serveLocal(w, r)
 }

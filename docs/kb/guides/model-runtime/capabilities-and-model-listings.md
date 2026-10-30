@@ -2,9 +2,9 @@
 title: Model capabilities and model listings
 summary: Advertise images, tools and context length in /v1/models, automatically or by hand.
 category: guides
-tags: [capabilities, models, tools, vision, context, autodetect, llama-server, vllm, halogen, playground, decisions]
-config_keys: [models.*.capabilities, models.*.capabilities.disableAuto, store.path]
-updated: 2026-10-10
+tags: [capabilities, voices, speech, models, tools, vision, context, autodetect, embeddings, reranker, llama-server, vllm, halogen, playground, decisions]
+config_keys: [models.*.capabilities, models.*.capabilities.disableAuto, models.*.capabilities.voices, models.*.capabilities.embeddings, models.*.capabilities.reranker, store.path]
+updated: 2026-10-28
 ---
 
 # Model capabilities and model listings
@@ -49,6 +49,7 @@ What each server can report:
 | tools | yes, from the chat template | no | yes |
 | decision model output | yes, from `/v1/models` | no | no |
 | reranker | no | no | no |
+| embeddings | no | no | no |
 
 llama-server is read from `/props`, and halogen-flash-server from its
 `/health`, which that project documents as the authoritative report of what
@@ -64,7 +65,9 @@ says.
 
 vLLM is the thin one. Nothing it serves says whether it was started with
 `--enable-auto-tool-choice`, or whether the model takes images, so set those
-by hand on vLLM models.
+by hand on vLLM models. Other servers whose `/v1/models` lists a context
+length, such as Gufo and yamz (`max_context`), are read the same way: context
+length only.
 
 llama-swap picks the right reader from the `owned_by` field in the server's
 own `/v1/models`: `llamacpp`, `vllm` or `halogen`. To check what a server
@@ -97,6 +100,35 @@ models:
 Set only what the model really supports. A false claim makes clients send
 requests that fail or get ignored.
 
+## Marking embedding and rerank models
+
+Embedding servers have nothing to probe: no endpoint tells an embedding
+model from a chat model without sending a real request, so discovery
+never fills this in. The same is true for a reranker. Set the flag by
+hand on both:
+
+```yaml
+models:
+  gte-modernbert:
+    cmd: llama-server -m gte-modernbert-F16.gguf --embedding --pooling cls --port ${PORT}
+    capabilities:
+      embeddings: true
+      context: 8192
+  gte-reranker:
+    cmd: llama-server -m gte-reranker-F16.gguf --embedding --pooling rank --port ${PORT}
+    capabilities:
+      reranker: true
+      context: 8192
+```
+
+The flags only change listing metadata: `/v1/models` reports
+`capabilities.embeddings: true` or `capabilities.reranker: true` so
+clients can tell these models apart from chat models, filter for them,
+and show a badge. Neither flag starts, stops or reroutes anything; what
+the server actually serves is decided by its command line. Without the
+flag an embedding model that reports `text -> text` from `/props` is
+indistinguishable from a chat model in the listing.
+
 ## Turning discovery off
 
 A field set to its zero value (`false`, `0`, `[]`) cannot be told apart from
@@ -116,6 +148,35 @@ models:
 
 With `disableAuto: true` the model advertises exactly what you wrote, and
 nothing else. On its own, with no other fields, it advertises nothing.
+
+## Setting the voice list for a speech model
+
+`GET /v1/audio/voices?model={id}` normally goes to the upstream server.
+`capabilities.voices` is an override: set it to answer the request from the
+config instead:
+
+```yaml
+models:
+  tts:
+    cmd: my-tts-server --port ${PORT}
+    capabilities:
+      in: [text]
+      out: [audio]
+      voices: ["voicea", "voiceb", "voicec"]
+```
+
+```bash
+curl -s 'localhost:8080/v1/audio/voices?model=tts'
+# {"model":"tts","voices":["voicea","voiceb","voicec"]}
+```
+
+The response is a JSON object with a `voices` array and the `model` id. OpenAI
+has no endpoint for listing voices, so this is a llama-swap convention, not an
+OpenAI format. The Playground's speech tab reads it. The model is not started to
+answer, and voices are not shown in `/v1/models`.
+When `voices` is empty or unset there is no override, and the request goes to
+the upstream server as before, which starts the model if it is not running.
+This applies to local models only, not peers.
 
 ## How the Playground uses this
 

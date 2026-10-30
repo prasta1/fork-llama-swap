@@ -43,6 +43,7 @@ var (
 	ErrNoRouterFound     = fmt.Errorf("no router found for model")
 	ErrNoPeerModelFound  = fmt.Errorf("peer model not found")
 	ErrNoLocalModelFound = fmt.Errorf("local model not found")
+	ErrInferencePaused   = fmt.Errorf("all inference is paused")
 )
 
 // IsWebSocketUpgrade reports whether r contains a valid websocket protocol
@@ -182,6 +183,8 @@ func SendError(w http.ResponseWriter, r *http.Request, err error) {
 		SendResponse(w, r, http.StatusNotFound, "no local server found for requested model")
 	case errors.Is(err, ErrNoRouterFound):
 		SendResponse(w, r, http.StatusNotFound, "no router for requested model")
+	case errors.Is(err, ErrInferencePaused):
+		SendResponse(w, r, http.StatusServiceUnavailable, ErrInferencePaused.Error())
 	default:
 		SendResponse(w, r, http.StatusInternalServerError, fmt.Sprintf("unspecific error: %v", err))
 	}
@@ -223,7 +226,8 @@ func SendResponse(w http.ResponseWriter, r *http.Request, status int, message st
 // FetchContext will attempt to get the model id from the context, then
 // from an /upstream/<model> path prefix, then from the request body/query.
 // If it extracts the model it will store it in the context for downstream
-// handlers. An error will be returned when a model cannot be identified.
+// handlers. An error will be returned when a model cannot be identified. It
+// always wraps ErrNoModelInContext, plus the body read error when there was one.
 func FetchContext(r *http.Request, cfg config.Config) (ReqContextData, error) {
 	data, ok := ReadContext(r.Context())
 	if ok {
@@ -238,7 +242,13 @@ func FetchContext(r *http.Request, cfg config.Config) (ReqContextData, error) {
 		return ReqContextData{}, ErrNoModelInContext
 	}
 
-	if data, err := extractContext(r); err == nil && data.Model != "" {
+	data, err := extractContext(r)
+	if err != nil {
+		// Keep the read error so callers can tell a body over its size cap
+		// (*http.MaxBytesError) from a request that names no model.
+		return ReqContextData{}, fmt.Errorf("%w: %w", ErrNoModelInContext, err)
+	}
+	if data.Model != "" {
 		realName, _ := cfg.RealModelName(data.Model)
 		if realName == "" {
 			realName = data.Model
